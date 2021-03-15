@@ -3,9 +3,10 @@ VERSION="1.0.0"
 AUTHOR="Shurgentum"
 
 # Note: Despite script creates destination folders, you should check it for existence manually
-DESTINATION_PATH="/.user_backups/"
+DESTINATION_PATH="$HOME/.user_backups/"
 #
-LOG_PATH="~/log/"
+LOG_PATH="$HOME/.log"
+LOGFILE="homebackup.log"
 # Available date formats available in $(man date)
 DATE_FORMAT="%d.%m.%Y-%T"
 
@@ -15,11 +16,11 @@ Usage: \n
 \t $(basename $0) [--option(-o) <argument>] <directory> \n
 \n
 Examples: \n
-\t $(basename $0) -i \n
-\t $(basename $0) -a localhost <folder> -u root\n
+\t $(basename $0) -i -a localhost <folder> \n
+\t $(basename $0) -a localhost -u root <folder> \n
 \n
 Options: \n
-\t [-i | --init ] - Init. \n
+\t [-i | --init ] - Exchange keys, create folders, etc... Required with first use. \n
 \t [-h | --help ] - Show this screen. \n
 \t [-v | --version] - Show version. \n
 \t [-u | --user] - User [default: $USER]. \n
@@ -55,7 +56,8 @@ function parse() {
       ;;
     -i | --init)
       INIT=true
-      return
+      # Shift 1 because no argument to be entered
+      shift 1
       ;;
     -u | --user)
       USER="$2"
@@ -77,15 +79,21 @@ function parse() {
 
 function init() {
   mkdir -p $LOG_PATH
+  touch $LOG_PATH/$LOGFILE
   ssh-copy-id $USER@$BACKUP_ADDRESS
-  ssh -oBatchMode=yes $USER@localhost "mkdir -p ~/$DESTINATION_PATH"
+  ssh -oBatchMode=yes $USER@$BACKUP_ADDRESS "mkdir -p $DESTINATION_PATH"
 }
 
-function logresult() {
-  if [[ $1 == 0 ]]; then
-    echo "[ $(date +"$DATE_FORMAT") ] -->> Successful backup of $ARCHIEVE to $USER@$BACKUP_ADDRESS:~/$DESTINATION_PATH" >>$LOG_PATH/homebackup.log
-  else
-    echo "[ $(date +"$DATE_FORMAT") ] -->> Backup failed with code $1 (scp) " >>$LOG_PATH/homebackup.log
+function checkspace() {
+  SOURCE_SIZE=$(du -sb ./test/ | cut -f1)
+  SOURCE_SPACE=$(df . | tail -1 | awk '{print $4}')
+  DESTINATION_SPACE=$(ssh -oBatchMode=yes $USER@$BACKUP_ADDRESS "df . | tail -1 | awk '{print \$4}'")
+  echo "Backup size: $SOURCE_SIZE bytes"
+  echo "Source space remaining: $SOURCE_SPACE bytes"
+  echo "Destination space available: $DESTINATION_SPACE bytes"
+  if (($SOURCE_SIZE > $SOURCE_SPACE || $SOURCE_SIZE > $DESTINATION_SPACE)); then
+    echo "No space available, exiting..."
+    exit 1
   fi
 }
 
@@ -93,19 +101,33 @@ function copy() {
   ARCHIEVE=./$(basename $1)_$(date +"$DATE_FORMAT").tar.gz
   tar -czf $ARCHIEVE $1
   # TODO: BACKUP_ADDRESS null check
-  scp $ARCHIEVE $USER@$BACKUP_ADDRESS:~/$DESTINATION_PATH
-
+  scp $ARCHIEVE $USER@$BACKUP_ADDRESS:$DESTINATION_PATH
+  rm $ARCHIEVE
 }
 
-function checkspace() {
-  
+function checkdone() {
+  echo -e "\nFile on remote: \n"
+  ssh -oBatchMode=yes $USER@$BACKUP_ADDRESS "ls -la $DESTINATION_PATH | grep '$(basename $ARCHIEVE)'"
+}
+
+function logresult() {
+  if [[ $1 == 0 ]]; then
+    echo "[ $(date +"$DATE_FORMAT") ] -->> Successful backup of $ARCHIEVE to $USER@$BACKUP_ADDRESS:$DESTINATION_PATH" >>$LOG_PATH/$LOGFILE
+  else
+    echo "[ $(date +"$DATE_FORMAT") ] -->> Backup failed! " >>$LOG_PATH/$LOGFILE
+    exit $1
+  fi
 }
 
 parse $@
 if [[ $INIT ]]; then
   init
-  return
+  if [[ $? ]]; then
+    echo -e "Init successful. Now you can execute command without -i argument \n"
+  fi
 fi
+
 checkspace $SOURCE
 copy $SOURCE
+checkdone $ARCHIEVE
 logresult $?
