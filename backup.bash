@@ -106,7 +106,7 @@ function copy() {
 }
 
 function checkdone() {
-  echo -e "\nFile on remote: \n"
+  echo -e "\n File on remote: \n"
   ssh -oBatchMode=yes $USER@$BACKUP_ADDRESS "ls -la $DESTINATION_PATH | grep '$(basename $ARCHIEVE)'"
 }
 
